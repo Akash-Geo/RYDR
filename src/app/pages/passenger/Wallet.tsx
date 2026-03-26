@@ -365,21 +365,17 @@ export default function PassengerWallet() {
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-gray-900 dark:text-white">{transaction.description}</p>
                     <p className="text-sm text-gray-500 dark:text-gray-400">
-                      {new Date(transaction.date).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                      })}
+                      {new Date(transaction.date).toLocaleDateString('en-GB')}
                     </p>
                   </div>
 
                   <div className="text-right">
                     <p
                       className={`text-xl font-bold ${
-                        transaction.amount > 0 ? 'text-[#00C853]' : 'text-red-600 dark:text-red-400'
+                        transaction.type === 'earning' ? 'text-[#00C853]' : 'text-red-600 dark:text-red-400'
                       }`}
                     >
-                      {transaction.amount > 0 ? '+' : ''}
+                      {transaction.type === 'earning' ? '+' : '-'}
                       {transaction.amount}
                     </p>
                     <p className="text-xs text-gray-500 dark:text-gray-400">Points</p>

@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Filter, SlidersHorizontal } from 'lucide-react';
 import { RideCard } from '../components/RideCard';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
+import { supabase } from '../../lib/supabase';
 
 // Mock data
 const mockRides = [
@@ -119,8 +121,31 @@ const mockRides = [
 ];
 
 export default function RideListings() {
+  const navigate = useNavigate();
   const [priceFilter, setPriceFilter] = useState<'all' | 'low' | 'high'>('all');
   const [ecoOnly, setEcoOnly] = useState(false);
+  const [hasGender, setHasGender] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    async function checkProfile() {
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('gender')
+          .eq('id', authData.user.id)
+          .single();
+        
+        if (!profile?.gender) {
+          alert('You must fill in your gender in the Account section before finding or booking a ride.');
+          navigate('/account');
+        } else {
+          setHasGender(true);
+        }
+      }
+    }
+    void checkProfile();
+  }, [navigate]);
 
   const filteredRides = mockRides.filter(ride => {
     if (ecoOnly && !ride.isEcoFriendly) return false;

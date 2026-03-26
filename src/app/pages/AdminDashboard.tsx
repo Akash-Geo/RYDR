@@ -1,21 +1,31 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ShieldCheck, Users, FileCheck, AlertTriangle, Settings, BarChart3, CheckCircle2, Clock, XCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ShieldCheck, Users, FileCheck, AlertTriangle, BarChart3, CheckCircle2, Clock, XCircle, Search, ArrowLeft, User, FileText, CreditCard, MessageCircle } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
+import { Input } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { supabase } from '../../lib/supabase';
 import { openSignedUrl } from '../../lib/storage';
+import DriverAvatar from '../components/DriverAvatar';
 
-interface Dispute {
+interface DisputeRow {
   id: string;
-  plaintiff: string;
-  defendant: string;
-  issueType: string;
-  description: string;
-  priority: 'high' | 'medium' | 'low';
-  status: 'pending' | 'resolved';
-  date: string;
+  ride_id: string;
+  status: 'open' | 'resolved';
+  created_at: string;
+  description?: string;
+  reporter: {
+    full_name: string | null;
+    phone: string | null;
+    role: string | null;
+  } | null;
+  ride: {
+    from_location: string;
+    to_location: string;
+    departure_time: string;
+  } | null;
 }
 
 interface VerificationRequest {
@@ -25,39 +35,6 @@ interface VerificationRequest {
   uploadDate: string;
   status: 'pending' | 'approved' | 'rejected';
 }
-
-const mockDisputes: Dispute[] = [
-  {
-    id: '1',
-    plaintiff: 'Sarah Johnson',
-    defendant: 'Michael Chen',
-    issueType: 'Route Deviation',
-    description: 'Driver took a different route than agreed',
-    priority: 'high',
-    status: 'pending',
-    date: '2026-02-16',
-  },
-  {
-    id: '2',
-    plaintiff: 'Emily Martinez',
-    defendant: 'David Kim',
-    issueType: 'Late Arrival',
-    description: 'Driver arrived 30 minutes late',
-    priority: 'medium',
-    status: 'pending',
-    date: '2026-02-15',
-  },
-  {
-    id: '3',
-    plaintiff: 'Robert Taylor',
-    defendant: 'Jessica Wong',
-    issueType: 'Payment Dispute',
-    description: 'Points not credited after ride completion',
-    priority: 'high',
-    status: 'pending',
-    date: '2026-02-15',
-  },
-];
 
 type VerificationRow = {
   id: string
@@ -78,13 +55,81 @@ type VerificationRow = {
   rejection_reason?: string | null
 }
 
+type UserRow = {
+  id: string
+  role: 'passenger' | 'driver' | 'admin'
+  full_name: string | null
+  email: string | null
+  phone: string | null
+  gender: string | null
+  aadhaar_number: string | null
+  aadhaar_document_path: string | null
+  license_number: string | null
+  license_issue_date: string | null
+  license_expiry_date: string | null
+  license_front_document_path: string | null
+  license_back_document_path: string | null
+  verification_status: 'pending' | 'verified' | 'rejected'
+  created_at: string
+  avatar_path: string | null
+}
+
 type AdminTab = 'overview' | 'users' | 'verification' | 'disputes' | 'settings'
 
-export default function AdminDashboard({ initialTab = 'overview' }: { initialTab?: AdminTab }) {
+export default function AdminDashboard({ initialTab = 'disputes' }: { initialTab?: AdminTab }) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<AdminTab>(initialTab);
   const [verificationRows, setVerificationRows] = useState<VerificationRow[]>([])
   const [verificationLoading, setVerificationLoading] = useState(false)
   const [verificationError, setVerificationError] = useState<string | null>(null)
+  const [disputes, setDisputes] = useState<DisputeRow[]>([]);
+  const [disputesLoading, setDisputesLoading] = useState(false);
+  const [disputesError, setDisputesError] = useState<string | null>(null);
+  const [users, setUsers] = useState<UserRow[]>([])
+  const [usersLoading, setUsersLoading] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedUser, setSelectedUser] = useState<UserRow | null>(null)
+
+  const handleMessageUser = async () => {
+    if (!selectedUser) return;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        window.alert('Session expired. Please log in again.');
+        return;
+      }
+
+      // Check for existing open chat
+      const { data: existingChats } = await supabase
+        .from('support_chats')
+        .select('id')
+        .eq('user_id', selectedUser.id)
+        .eq('status', 'open')
+        .maybeSingle();
+
+      if (existingChats) {
+        navigate(`/support-chat/${existingChats.id}`);
+        return;
+      }
+
+      // Create new chat
+      const { data: newChat, error } = await supabase
+        .from('support_chats')
+        .insert({
+          user_id: selectedUser.id,
+          admin_id: user.id,
+          status: 'open'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (newChat) navigate(`/support-chat/${newChat.id}`);
+    } catch (err) {
+      console.error('Error starting chat:', err);
+      window.alert('Failed to start chat');
+    }
+  };
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -121,17 +166,95 @@ export default function AdminDashboard({ initialTab = 'overview' }: { initialTab
     }
   }, [activeTab])
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDisputes() {
+      if (activeTab !== 'disputes') return;
+      setDisputesLoading(true);
+      setDisputesError(null);
+      try {
+        const { data, error } = await supabase
+          .from('disputes')
+          .select(`
+            id,
+            ride_id,
+            status,
+            created_at,
+            description,
+            reporter:profiles!raised_by (
+              full_name,
+              phone,
+              role
+            ),
+            ride:rides (
+              from_location,
+              to_location,
+              departure_time
+            )
+          `)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        if (!cancelled) setDisputes((data ?? []) as unknown as DisputeRow[]);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to load disputes';
+        if (!cancelled) setDisputesError(message);
+      } finally {
+        if (!cancelled) setDisputesLoading(false);
+      }
+    }
+    void loadDisputes();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab]);
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadUsers() {
+      if (activeTab !== 'users') return
+      setUsersLoading(true)
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .in('role', ['passenger', 'driver'])
+          .order('created_at', { ascending: false })
+
+        if (error) throw error
+        if (cancelled) return
+        setUsers((data ?? []) as UserRow[])
+      } catch (err) {
+        console.error('Failed to load users', err)
+      } finally {
+        if (!cancelled) setUsersLoading(false)
+      }
+    }
+    void loadUsers()
+    return () => { cancelled = true }
+  }, [activeTab])
+
   const pendingVerificationsCount = useMemo(
     () => verificationRows.filter((v) => v.verification_status === 'pending').length,
     [verificationRows],
   )
 
   const stats = {
-    activeDisputes: mockDisputes.filter(d => d.status === 'pending').length,
+    activeDisputes: disputes.filter(d => d.status === 'open').length,
     pendingVerifications: pendingVerificationsCount,
     totalRides: 1247,
     activeUsers: 3856,
   };
+
+  const filteredUsers = useMemo(() => {
+    if (!searchQuery) return users
+    const lower = searchQuery.toLowerCase()
+    return users.filter((u) =>
+      u.full_name?.toLowerCase().includes(lower) ||
+      u.phone?.includes(lower) ||
+      u.id.toLowerCase().includes(lower)
+    )
+  }, [users, searchQuery])
 
   const updateVerification = async (rowId: string, status: 'verified' | 'rejected') => {
     const reason =
@@ -139,17 +262,23 @@ export default function AdminDashboard({ initialTab = 'overview' }: { initialTab
         ? window.prompt('Optional: rejection reason (leave blank to skip)') ?? null
         : null
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('profiles')
       .update({
         verification_status: status,
-        verified_by: status === 'verified' ? (await supabase.auth.getUser()).data.user?.id ?? null : null,
         rejection_reason: reason && reason.trim() ? reason.trim() : null,
       })
       .eq('id', rowId)
+      .select()
 
     if (error) {
-      window.alert(error.message)
+      console.error('Error updating verification status:', error);
+      window.alert(`Failed to update status: ${error.message}`);
+      return
+    }
+
+    if (!data || data.length === 0) {
+      window.alert('Update failed: User not found or permission denied.')
       return
     }
 
@@ -164,59 +293,27 @@ export default function AdminDashboard({ initialTab = 'overview' }: { initialTab
           : r,
       ),
     )
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === rowId
+          ? {
+              ...u,
+              verification_status: status,
+            }
+          : u,
+      ),
+    )
+
+    if (selectedUser?.id === rowId) {
+      setSelectedUser((prev) => (prev ? { ...prev, verification_status: status } : null))
+    }
   }
 
   return (
     <div className="min-h-screen dark:bg-gray-900">
-      <div className="flex flex-col lg:flex-row">
-        {/* Sidebar */}
-        <aside className="hidden lg:block w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 min-h-screen sticky top-0">
-          <nav className="p-4 space-y-1">
-            <Button
-              variant={activeTab === 'overview' ? 'default' : 'ghost'}
-              className={`w-full justify-start text-base h-12 ${activeTab === 'overview' ? 'bg-[#00C853] hover:bg-emerald-600' : 'dark:text-gray-300'}`}
-              onClick={() => setActiveTab('overview')}
-            >
-              <BarChart3 className="w-5 h-5 mr-2" />
-              Dashboard
-            </Button>
-            <Button
-              variant={activeTab === 'users' ? 'default' : 'ghost'}
-              className={`w-full justify-start text-base h-12 ${activeTab === 'users' ? 'bg-[#00C853] hover:bg-emerald-600' : 'dark:text-gray-300'}`}
-              onClick={() => setActiveTab('users')}
-            >
-              <Users className="w-5 h-5 mr-2" />
-              User Management
-            </Button>
-            <Button
-              variant={activeTab === 'verification' ? 'default' : 'ghost'}
-              className={`w-full justify-start text-base h-12 ${activeTab === 'verification' ? 'bg-[#00C853] hover:bg-emerald-600' : 'dark:text-gray-300'}`}
-              onClick={() => setActiveTab('verification')}
-            >
-              <FileCheck className="w-5 h-5 mr-2" />
-              Verification Requests
-            </Button>
-            <Button
-              variant={activeTab === 'disputes' ? 'default' : 'ghost'}
-              className={`w-full justify-start text-base h-12 ${activeTab === 'disputes' ? 'bg-[#00C853] hover:bg-emerald-600' : 'dark:text-gray-300'}`}
-              onClick={() => setActiveTab('disputes')}
-            >
-              <AlertTriangle className="w-5 h-5 mr-2" />
-              Disputes
-            </Button>
-            <Button
-              variant={activeTab === 'settings' ? 'default' : 'ghost'}
-              className={`w-full justify-start text-base h-12 ${activeTab === 'settings' ? 'bg-[#00C853] hover:bg-emerald-600' : 'dark:text-gray-300'}`}
-              onClick={() => setActiveTab('settings')}
-            >
-              <Settings className="w-5 h-5 mr-2" />
-              Settings
-            </Button>
-          </nav>
-        </aside>
-
-        {/* Main Content */}
-        <main className="flex-1 p-4 md:p-6 lg:p-8">
+      {/* Main Content */}
+      <main className="p-4 md:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
             {/* Header */}
             <div className="mb-6 md:mb-8">
@@ -265,10 +362,9 @@ export default function AdminDashboard({ initialTab = 'overview' }: { initialTab
             <div className="lg:hidden mb-6">
               <select
                 value={activeTab}
-                onChange={(e) => setActiveTab(e.target.value)}
+                onChange={(e) => setActiveTab(e.target.value as AdminTab)}
                 className="w-full h-12 px-4 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-base"
               >
-                <option value="overview">Dashboard</option>
                 <option value="disputes">Disputes ({stats.activeDisputes})</option>
                 <option value="verification">Verifications ({stats.pendingVerifications})</option>
                 <option value="users">Users</option>
@@ -276,9 +372,8 @@ export default function AdminDashboard({ initialTab = 'overview' }: { initialTab
             </div>
 
             {/* Content Tabs */}
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as AdminTab)}>
               <TabsList className="mb-6 hidden lg:flex h-12">
-                <TabsTrigger value="overview" className="text-base px-6">Overview</TabsTrigger>
                 <TabsTrigger value="disputes" className="text-base px-6">Disputes ({stats.activeDisputes})</TabsTrigger>
                 <TabsTrigger value="verification" className="text-base px-6">Verifications ({stats.pendingVerifications})</TabsTrigger>
                 <TabsTrigger value="users" className="text-base px-6">Users</TabsTrigger>
@@ -320,58 +415,72 @@ export default function AdminDashboard({ initialTab = 'overview' }: { initialTab
                     <h3 className="text-xl md:text-2xl font-semibold dark:text-white">Dispute Resolution</h3>
                   </div>
                   <div className="overflow-x-auto">
+                    {disputesError && (
+                      <div className="p-6 text-red-700 dark:text-red-300">{disputesError}</div>
+                    )}
                     <Table>
                       <TableHeader>
                         <TableRow className="dark:border-gray-700">
                           <TableHead className="dark:text-gray-300">Dispute ID</TableHead>
                           <TableHead className="dark:text-gray-300">Parties</TableHead>
-                          <TableHead className="dark:text-gray-300">Issue Type</TableHead>
-                          <TableHead className="dark:text-gray-300">Priority</TableHead>
+                          <TableHead className="dark:text-gray-300">Route</TableHead>
                           <TableHead className="dark:text-gray-300">Date</TableHead>
                           <TableHead className="dark:text-gray-300">Status</TableHead>
                           <TableHead className="dark:text-gray-300">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {mockDisputes.map((dispute) => (
+                        {(disputesLoading ? [] : disputes).map((dispute) => (
                           <TableRow key={dispute.id} className="dark:border-gray-700">
-                            <TableCell className="font-medium dark:text-white">#{dispute.id}</TableCell>
+                            <TableCell className="font-medium dark:text-white">#{dispute.id.slice(0, 8)}</TableCell>
                             <TableCell>
                               <div className="text-sm">
-                                <p className="font-medium dark:text-white">{dispute.plaintiff}</p>
-                                <p className="text-gray-500 dark:text-gray-400">vs {dispute.defendant}</p>
+                                <p className="font-medium dark:text-white">{dispute.reporter?.full_name || 'Unknown'}</p>
+                                <p className="text-gray-500 dark:text-gray-400 capitalize">{dispute.reporter?.role || 'User'}</p>
                               </div>
                             </TableCell>
-                            <TableCell className="dark:text-gray-300">{dispute.issueType}</TableCell>
-                            <TableCell>
-                              <Badge
-                                className={
-                                  dispute.priority === 'high'
-                                    ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-0'
-                                    : dispute.priority === 'medium'
-                                    ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-0'
-                                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-0'
-                                }
-                              >
-                                {dispute.priority}
-                              </Badge>
+                            <TableCell className="dark:text-gray-300">
+                              {dispute.ride ? (
+                                <div className="flex flex-col text-sm">
+                                  <span>{dispute.ride.from_location} →</span>
+                                  <span>{dispute.ride.to_location}</span>
+                                </div>
+                              ) : 'Ride details unavailable'}
                             </TableCell>
                             <TableCell className="text-sm text-gray-600 dark:text-gray-400">
-                              {new Date(dispute.date).toLocaleDateString()}
+                              {new Date(dispute.created_at).toLocaleDateString('en-GB')}
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline" className="border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400">
+                              <Badge variant="outline" className={`${dispute.status === 'resolved' ? 'border-green-300 text-green-700 dark:border-green-800 dark:text-green-400' : 'border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-400'}`}>
                                 <Clock className="w-3 h-3 mr-1" />
                                 {dispute.status}
                               </Badge>
                             </TableCell>
                             <TableCell>
-                              <Button size="sm" className="bg-[#00C853] hover:bg-emerald-600 text-white h-9 md:h-10 text-sm md:text-base">
-                                Resolve
+                              <Button 
+                                size="sm" 
+                                className="bg-[#00C853] hover:bg-emerald-600 text-white h-9 md:h-10 text-sm md:text-base"
+                                onClick={() => navigate(`/dispute/${dispute.id}`)}
+                              >
+                                View Chat
                               </Button>
                             </TableCell>
                           </TableRow>
                         ))}
+                        {disputesLoading && (
+                          <TableRow className="dark:border-gray-700">
+                            <TableCell colSpan={6} className="p-6 text-gray-600 dark:text-gray-400 text-center">
+                              Loading disputes...
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        {!disputesLoading && disputes.length === 0 && (
+                          <TableRow className="dark:border-gray-700">
+                            <TableCell colSpan={6} className="p-6 text-gray-600 dark:text-gray-400 text-center">
+                              No disputes found.
+                            </TableCell>
+                          </TableRow>
+                        )}
                       </TableBody>
                     </Table>
                   </div>
@@ -424,7 +533,7 @@ export default function AdminDashboard({ initialTab = 'overview' }: { initialTab
                                     License: <span className="font-medium">{row.license_number ?? '—'}</span>
                                   </p>
                                   <p className="text-gray-500 dark:text-gray-400">
-                                    {row.license_issue_date ?? '—'} → {row.license_expiry_date ?? '—'}
+                                    {row.license_issue_date ? new Date(row.license_issue_date).toLocaleDateString('en-GB') : '—'} → {row.license_expiry_date ? new Date(row.license_expiry_date).toLocaleDateString('en-GB') : '—'}
                                   </p>
                                 </div>
                               )}
@@ -476,7 +585,7 @@ export default function AdminDashboard({ initialTab = 'overview' }: { initialTab
                               </div>
                             </TableCell>
                             <TableCell className="text-sm text-gray-600 dark:text-gray-400">
-                              {new Date(row.created_at).toLocaleDateString()}
+                              {new Date(row.created_at).toLocaleDateString('en-GB')}
                             </TableCell>
                             <TableCell>
                               <Badge
@@ -537,15 +646,219 @@ export default function AdminDashboard({ initialTab = 'overview' }: { initialTab
 
               {/* Users */}
               <TabsContent value="users">
-                <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-2xl border border-gray-200 dark:border-gray-700 shadow-lg p-6">
-                  <h3 className="text-xl md:text-2xl font-semibold mb-4 dark:text-white">User Management</h3>
-                  <p className="text-gray-600 dark:text-gray-400 text-base md:text-lg">User management interface coming soon...</p>
-                </div>
+                {selectedUser ? (
+                  <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-2xl border border-gray-200 dark:border-gray-700 shadow-lg p-6">
+                    <Button
+                      variant="ghost"
+                      onClick={() => setSelectedUser(null)}
+                      className="mb-6 pl-0 hover:bg-transparent hover:text-[#00C853] dark:hover:text-emerald-400"
+                    >
+                      <ArrowLeft className="w-5 h-5 mr-2" />
+                      Back to Users
+                    </Button>
+
+                    <div className="flex items-start justify-between mb-8">
+                      <div className="flex items-center gap-4">
+                        <DriverAvatar 
+                          path={selectedUser.avatar_path} 
+                          name={selectedUser.full_name ?? 'User'} 
+                          className="w-16 h-16 text-xl"
+                        />
+                        <div>
+                          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{selectedUser.full_name}</h2>
+                          <div className="flex items-center gap-3 text-gray-500 dark:text-gray-400">
+                            <span className="flex items-center gap-1">
+                              <User className="w-4 h-4" />
+                              {selectedUser.role}
+                            </span>
+                            <span>•</span>
+                            <span>ID: {selectedUser.id}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <Badge
+                          className={
+                            selectedUser.verification_status === 'verified'
+                              ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-0'
+                              : selectedUser.verification_status === 'rejected'
+                              ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-0'
+                              : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-0'
+                          }
+                        >
+                          {selectedUser.verification_status}
+                        </Badge>
+                        <Button 
+                          size="sm" 
+                          onClick={handleMessageUser}
+                          className="bg-blue-600 hover:bg-blue-700 text-white"
+                        >
+                          <MessageCircle className="w-4 h-4 mr-2" />
+                          Message User
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-8">
+                      <div className="space-y-6">
+                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2">
+                          Personal Details
+                        </h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Phone</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{selectedUser.phone || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Email</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{selectedUser.email || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Gender</p>
+                            <p className="font-medium text-gray-900 dark:text-white capitalize">{selectedUser.gender || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Joined</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{new Date(selectedUser.created_at).toLocaleDateString('en-GB')}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-6">
+                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2">
+                          Documents
+                        </h3>
+                        
+                        {selectedUser.role === 'passenger' && (
+                          <div className="space-y-4">
+                            <div>
+                              <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Aadhaar Number</p>
+                              <p className="font-medium text-gray-900 dark:text-white">{selectedUser.aadhaar_number || '—'}</p>
+                            </div>
+                            {selectedUser.aadhaar_document_path && (
+                              <Button
+                                variant="outline"
+                                className="w-full justify-start dark:border-gray-700"
+                                onClick={() => openSignedUrl({ bucket: 'user-documents', path: selectedUser.aadhaar_document_path! })}
+                              >
+                                <FileText className="w-4 h-4 mr-2" />
+                                View Aadhaar Document
+                              </Button>
+                            )}
+                          </div>
+                        )}
+
+                        {selectedUser.role === 'driver' && (
+                          <div className="space-y-4">
+                            <div>
+                              <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">License Number</p>
+                              <p className="font-medium text-gray-900 dark:text-white">{selectedUser.license_number || '—'}</p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              {selectedUser.license_front_document_path && (
+                                <Button
+                                  variant="outline"
+                                  className="w-full justify-start dark:border-gray-700"
+                                  onClick={() => openSignedUrl({ bucket: 'user-documents', path: selectedUser.license_front_document_path! })}
+                                >
+                                  <CreditCard className="w-4 h-4 mr-2" />
+                                  License Front
+                                </Button>
+                              )}
+                              {selectedUser.license_back_document_path && (
+                                <Button
+                                  variant="outline"
+                                  className="w-full justify-start dark:border-gray-700"
+                                  onClick={() => openSignedUrl({ bucket: 'user-documents', path: selectedUser.license_back_document_path! })}
+                                >
+                                  <CreditCard className="w-4 h-4 mr-2" />
+                                  License Back
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-2xl border border-gray-200 dark:border-gray-700 shadow-lg overflow-hidden">
+                    <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <h3 className="text-xl md:text-2xl font-semibold dark:text-white">User Management</h3>
+                      <div className="relative w-full md:w-72">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <Input
+                          placeholder="Search users..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-9 bg-white dark:bg-gray-900/50"
+                        />
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="dark:border-gray-700">
+                            <TableHead className="dark:text-gray-300">User ID</TableHead>
+                            <TableHead className="dark:text-gray-300">Name</TableHead>
+                            <TableHead className="dark:text-gray-300">Phone</TableHead>
+                            <TableHead className="dark:text-gray-300">Gender</TableHead>
+                            <TableHead className="dark:text-gray-300">Role</TableHead>
+                            <TableHead className="dark:text-gray-300">Status</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {usersLoading ? (
+                            <TableRow className="dark:border-gray-700">
+                              <TableCell colSpan={6} className="p-6 text-center text-gray-600 dark:text-gray-400">
+                                Loading users...
+                              </TableCell>
+                            </TableRow>
+                          ) : filteredUsers.length === 0 ? (
+                            <TableRow className="dark:border-gray-700">
+                              <TableCell colSpan={6} className="p-6 text-center text-gray-600 dark:text-gray-400">
+                                No users found.
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            filteredUsers.map((user) => (
+                              <TableRow 
+                                key={user.id} 
+                                className="dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                                onClick={() => setSelectedUser(user)}
+                              >
+                                <TableCell className="font-medium dark:text-white font-mono text-xs">
+                                  {user.id.slice(0, 8)}...
+                                </TableCell>
+                                <TableCell className="dark:text-white">{user.full_name || '—'}</TableCell>
+                                <TableCell className="dark:text-gray-300">{user.phone || '—'}</TableCell>
+                                <TableCell className="dark:text-gray-300 capitalize">{user.gender || '—'}</TableCell>
+                                <TableCell className="dark:text-gray-300 capitalize">{user.role}</TableCell>
+                                <TableCell>
+                                  <Badge
+                                    className={
+                                      user.verification_status === 'verified'
+                                        ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-0'
+                                        : user.verification_status === 'rejected'
+                                        ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-0'
+                                        : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-0'
+                                    }
+                                  >
+                                    {user.verification_status}
+                                  </Badge>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                )}
               </TabsContent>
             </Tabs>
           </div>
-        </main>
-      </div>
+      </main>
     </div>
   );
 }

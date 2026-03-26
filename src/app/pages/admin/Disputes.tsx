@@ -1,6 +1,5 @@
-import AdminDashboard from '../AdminDashboard'
+import AdminDashboard from '../AdminDashboard';
 
-export default function AdminDisputesPage() {
-  return <AdminDashboard initialTab="disputes" />
+export default function AdminDisputes() {
+  return <AdminDashboard key="disputes" initialTab="disputes" />;
 }
-

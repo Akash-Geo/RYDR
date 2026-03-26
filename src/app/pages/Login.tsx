@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Leaf, Mail, Lock, ArrowRight } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -200,7 +200,7 @@ export default function Login() {
                       id="remember"
                       checked={formData.rememberMe}
                       onCheckedChange={(checked) => handleChange('rememberMe', checked as boolean)}
-                      className="data-[state=checked]:bg-[#00C853] data-[state=checked]:border-[#00C853]"
+                      className="border-gray-400 data-[state=checked]:bg-[#00C853] data-[state=checked]:border-[#00C853]"
                     />
                     <Label htmlFor="remember" className="text-sm md:text-base text-gray-700 dark:text-gray-300 cursor-pointer">
                       Remember me

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router';
-import { User, Mail, Phone, Edit2, Camera, LogOut, ShieldCheck, IdCard, BadgeCheck, BadgeX } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { User, Mail, Phone, Edit2, Camera, LogOut, ShieldCheck, IdCard, BadgeCheck, BadgeX, Car } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { supabase } from '../../../lib/supabase';
 import { Switch } from '../../components/ui/switch';
-import { getSignedUrl, uploadUserFile } from '../../../lib/storage';
+import { uploadUserFile } from '../../../lib/storage';
 
 export default function PassengerAccount() {
   const navigate = useNavigate();
@@ -33,6 +33,10 @@ export default function PassengerAccount() {
     licenseNumber: '',
     licenseIssueDate: '',
     licenseExpiryDate: '',
+    vehicleRegistration: '',
+    vehicleCompany: '',
+    vehicleModel: '',
+    vehicleColor: '',
   });
 
   const theme = useMemo(() => {
@@ -65,7 +69,7 @@ export default function PassengerAccount() {
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select(
-            'role, full_name, phone, verification_status, admin_id, aadhaar_number, license_number, license_issue_date, license_expiry_date, avatar_path, gender, is_smoker',
+            'role, full_name, phone, verification_status, admin_id, aadhaar_number, license_number, license_issue_date, license_expiry_date, avatar_path, gender, is_smoker, vehicle_registration, vehicle_company, vehicle_model, vehicle_color',
           )
           .eq('id', user.id)
           .maybeSingle();
@@ -88,6 +92,10 @@ export default function PassengerAccount() {
           licenseNumber: profile.license_number ?? '',
           licenseIssueDate: profile.license_issue_date ?? '',
           licenseExpiryDate: profile.license_expiry_date ?? '',
+          vehicleRegistration: profile.vehicle_registration ?? '',
+          vehicleCompany: profile.vehicle_company ?? '',
+          vehicleModel: profile.vehicle_model ?? '',
+          vehicleColor: profile.vehicle_color ?? '',
         };
 
         // if the user somehow navigated to a route that doesn't match
@@ -118,8 +126,8 @@ export default function PassengerAccount() {
         }
 
         if (nextProfile.avatarPath) {
-          const url = await getSignedUrl({ bucket: 'avatars', path: nextProfile.avatarPath });
-          if (!cancelled) setAvatarUrl(url);
+          const { data } = await supabase.storage.from('avatars').createSignedUrl(nextProfile.avatarPath, 3600);
+          if (!cancelled && data?.signedUrl) setAvatarUrl(data.signedUrl);
         } else {
           if (!cancelled) setAvatarUrl(null);
         }
@@ -162,6 +170,10 @@ export default function PassengerAccount() {
           phone: profileData.phone,
           gender: profileData.gender || null,
           is_smoker: profileData.isSmoker,
+          vehicle_registration: profileData.vehicleRegistration,
+          vehicle_company: profileData.vehicleCompany,
+          vehicle_model: profileData.vehicleModel,
+          vehicle_color: profileData.vehicleColor,
         })
         .eq('id', user.id);
 
@@ -207,8 +219,8 @@ export default function PassengerAccount() {
       if (updateError) throw updateError;
 
       setProfileData((p) => ({ ...p, avatarPath: uploadedPath }));
-      const url = await getSignedUrl({ bucket: 'avatars', path: uploadedPath });
-      setAvatarUrl(url);
+      const { data } = await supabase.storage.from('avatars').createSignedUrl(uploadedPath, 3600);
+      if (data?.signedUrl) setAvatarUrl(data.signedUrl);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to upload photo';
       setError(message);
@@ -222,17 +234,17 @@ export default function PassengerAccount() {
       {/* Header */}
       <div className={`bg-gradient-to-r ${theme.header} px-4 pt-6 pb-20`}>
         <div className="max-w-screen-xl mx-auto">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-6 relative">
             <h1 className="text-2xl md:text-3xl font-bold text-white">My Account</h1>
             {profileData.role && (
-              <p className="text-sm text-white/80 uppercase">
+              <p className="absolute left-1/2 -translate-x-1/2 text-sm font-medium tracking-wider text-white/90 uppercase">
                 {profileData.role}
               </p>
             )}
             <Button
               variant="ghost"
               onClick={() => setIsEditing(!isEditing)}
-              className="text-white hover:bg-white/20"
+              className="bg-white/20 hover:bg-white/30 text-white font-medium backdrop-blur-sm"
               disabled={isLoading}
             >
               <Edit2 className="w-5 h-5 mr-2" />
@@ -414,6 +426,34 @@ export default function PassengerAccount() {
                     disabled
                     className="h-12 dark:bg-gray-900 dark:border-gray-700 dark:text-white disabled:opacity-70"
                   />
+                </div>
+              )}
+
+              {/* Vehicle Details for Drivers and Admins */}
+              {(profileData.role === 'driver' || profileData.role === 'admin') && (
+                <div className="col-span-1 md:col-span-2 space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                    <Car className="w-5 h-5 text-[#00C853]" />
+                    Vehicle Details
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="vehicleRegistration" className="text-gray-700 dark:text-gray-300">Registration Number</Label>
+                      <Input id="vehicleRegistration" value={profileData.vehicleRegistration} onChange={(e) => handleChange('vehicleRegistration', e.target.value)} disabled={!isEditing || isLoading} placeholder="KL 01 AB 1234" className="h-12 dark:bg-gray-900 dark:border-gray-700 dark:text-white disabled:opacity-70" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="vehicleCompany" className="text-gray-700 dark:text-gray-300">Company</Label>
+                      <Input id="vehicleCompany" value={profileData.vehicleCompany} onChange={(e) => handleChange('vehicleCompany', e.target.value)} disabled={!isEditing || isLoading} placeholder="e.g. Honda" className="h-12 dark:bg-gray-900 dark:border-gray-700 dark:text-white disabled:opacity-70" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="vehicleModel" className="text-gray-700 dark:text-gray-300">Model</Label>
+                      <Input id="vehicleModel" value={profileData.vehicleModel} onChange={(e) => handleChange('vehicleModel', e.target.value)} disabled={!isEditing || isLoading} placeholder="e.g. City" className="h-12 dark:bg-gray-900 dark:border-gray-700 dark:text-white disabled:opacity-70" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="vehicleColor" className="text-gray-700 dark:text-gray-300">Color</Label>
+                      <Input id="vehicleColor" value={profileData.vehicleColor} onChange={(e) => handleChange('vehicleColor', e.target.value)} disabled={!isEditing || isLoading} placeholder="e.g. White" className="h-12 dark:bg-gray-900 dark:border-gray-700 dark:text-white disabled:opacity-70" />
+                    </div>
+                  </div>
                 </div>
               )}
 

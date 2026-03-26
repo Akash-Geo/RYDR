@@ -3,7 +3,7 @@ import { Wallet as WalletIcon, Plus, Send, Gift, TrendingUp, TrendingDown, Arrow
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
-import { supabase } from '../lib/supabase';
+import { supabase } from '../../lib/supabase';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 
@@ -311,11 +311,7 @@ export default function Wallet() {
                       <p className="font-semibold text-gray-900 dark:text-white mb-1 text-sm md:text-base truncate">{transaction.description}</p>
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm text-gray-500 dark:text-gray-400">
-                          {new Date(transaction.date).toLocaleDateString('en-US', { 
-                            month: 'short', 
-                            day: 'numeric',
-                            year: 'numeric'
-                          })}
+                          {new Date(transaction.date).toLocaleDateString('en-GB')}
                         </p>
                         <Badge 
                           variant={transaction.status === 'completed' ? 'secondary' : 'outline'}
@@ -332,9 +328,9 @@ export default function Wallet() {
                     {/* Amount */}
                     <div className="text-right flex-shrink-0">
                       <p className={`text-xl md:text-2xl font-bold ${
-                        transaction.amount > 0 ? 'text-[#00C853]' : 'text-red-600 dark:text-red-400'
+                        transaction.type === 'earning' ? 'text-[#00C853]' : 'text-red-600 dark:text-red-400'
                       }`}>
-                        {transaction.amount > 0 ? '+' : ''}{transaction.amount} Pts
+                        {transaction.type === 'earning' ? '+' : '-'}{transaction.amount} Pts
                       </p>
                     </div>
                   </div>

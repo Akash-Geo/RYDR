@@ -64,11 +64,12 @@ $$;
 -- 4) Update RLS policies to allow admins to view/manage verification
 drop policy if exists "profiles_select_own" on public.profiles;
 drop policy if exists "profiles_select_own_or_admin" on public.profiles;
-create policy "profiles_select_own_or_admin"
+drop policy if exists "profiles_select_all" on public.profiles;
+create policy "profiles_select_all"
 on public.profiles
 for select
 to authenticated
-using (id = auth.uid() or public.is_admin());
+using (true);
 
 drop policy if exists "profiles_update_own" on public.profiles;
 drop policy if exists "profiles_update_own_or_admin" on public.profiles;
@@ -76,8 +77,8 @@ create policy "profiles_update_own_or_admin"
 on public.profiles
 for update
 to authenticated
-using (id = auth.uid() or public.is_admin())
-with check (id = auth.uid() or public.is_admin());
+using (id = auth.uid())
+with check (id = auth.uid());
 
 -- 5) Wallet support (per-profile balance + payments)
 
@@ -685,22 +686,24 @@ alter table public.bookings enable row level security;
 alter table public.notifications enable row level security;
 alter table public.ride_feedback enable row level security;
 
--- Rides: drivers manage their own rides, passengers can read active rides
+-- Rides: allow all authenticated users to read all ride statuses.
+-- privacy is enforced at the bookings level (passengers see only their bookings).
+-- drivers can manage their own rides (update/insert/delete).
 drop policy if exists "rides_select_public" on public.rides;
+drop policy if exists "rides_insert_driver" on public.rides;
+drop policy if exists "rides_update_driver" on public.rides;
 create policy "rides_select_public"
 on public.rides
 for select
 to authenticated
-using (status in ('scheduled', 'ongoing') or driver_id = auth.uid());
+using (true);
 
-drop policy if exists "rides_insert_driver" on public.rides;
 create policy "rides_insert_driver"
 on public.rides
 for insert
 to authenticated
 with check (driver_id = auth.uid());
 
-drop policy if exists "rides_update_driver" on public.rides;
 create policy "rides_update_driver"
 on public.rides
 for update
@@ -710,6 +713,8 @@ with check (driver_id = auth.uid());
 
 -- Bookings: passengers manage their own bookings
 drop policy if exists "bookings_select_own" on public.bookings;
+drop policy if exists "bookings_insert_own" on public.bookings;
+drop policy if exists "bookings_update_own" on public.bookings;
 create policy "bookings_select_own"
 on public.bookings
 for select
@@ -721,14 +726,12 @@ using (
   )
 );
 
-drop policy if exists "bookings_insert_own" on public.bookings;
 create policy "bookings_insert_own"
 on public.bookings
 for insert
 to authenticated
 with check (passenger_id = auth.uid());
 
-drop policy if exists "bookings_update_own" on public.bookings;
 create policy "bookings_update_own"
 on public.bookings
 for update
@@ -738,13 +741,14 @@ with check (passenger_id = auth.uid());
 
 -- Notifications: user can read their own notifications
 drop policy if exists "notifications_select_own" on public.notifications;
+drop policy if exists "notifications_update_own" on public.notifications;
+drop policy if exists "notifications_insert_any" on public.notifications;
 create policy "notifications_select_own"
 on public.notifications
 for select
 to authenticated
 using (user_id = auth.uid());
 
-drop policy if exists "notifications_update_own" on public.notifications;
 create policy "notifications_update_own"
 on public.notifications
 for update
@@ -753,7 +757,6 @@ using (user_id = auth.uid())
 with check (user_id = auth.uid());
 
 -- Notifications: allow any authenticated user to insert notifications
-drop policy if exists "notifications_insert_any" on public.notifications;
 create policy "notifications_insert_any"
 on public.notifications
 for insert
@@ -762,13 +765,13 @@ with check (true);
 
 -- Ratings: passengers can insert their own feedback, everyone can read
 drop policy if exists "ride_feedback_select_all" on public.ride_feedback;
+drop policy if exists "ride_feedback_insert_own" on public.ride_feedback;
 create policy "ride_feedback_select_all"
 on public.ride_feedback
 for select
 to authenticated
 using (true);
 
-drop policy if exists "ride_feedback_insert_own" on public.ride_feedback;
 create policy "ride_feedback_insert_own"
 on public.ride_feedback
 for insert

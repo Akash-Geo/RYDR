@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, MapPin, Calendar, Clock, Filter, Leaf, Cigarette } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
-import { useNavigate } from 'react-router';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '../../lib/supabase';
 
 export default function Home() {
   const navigate = useNavigate();
@@ -16,10 +17,32 @@ export default function Home() {
     date: '',
     time: ''
   });
+  const [hasGender, setHasGender] = useState<boolean | null>(null);
 
-  const handleSearch = (e: React.FormEvent) => {
+  useEffect(() => {
+    async function checkProfile() {
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('gender')
+          .eq('id', authData.user.id)
+          .single();
+        setHasGender(!!profile?.gender);
+      }
+    }
+    void checkProfile();
+  }, []);
+
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Navigate to rides page with search params
+    
+    if (hasGender === false) {
+      alert('You must fill in your gender in the Account section before finding or booking a ride.');
+      navigate('/account');
+      return;
+    }
+    
     navigate('/rides');
   };
 

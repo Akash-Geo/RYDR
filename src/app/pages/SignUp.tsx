@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Leaf, Mail, Lock, User, ArrowRight, Phone, Upload, Shield, Car, Users, Camera, FileText, Calendar, X } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -8,7 +8,7 @@ import { Checkbox } from '../components/ui/checkbox';
 import { supabase } from '../../lib/supabase';
 import { uploadUserFile } from '../../lib/storage';
 
-type UserRole = 'passenger' | 'driver' | null;
+type UserRole = 'passenger' | 'driver' | 'admin' | null;
 
 export default function SignUp() {
   const navigate = useNavigate();
@@ -33,7 +33,9 @@ export default function SignUp() {
 
   const roleHome = (role: Exclude<UserRole, null>) => {
     if (role === 'passenger') return '/passenger/find-ride';
-    return '/driver/post-ride';
+    if (role === 'driver') return '/driver/post-ride';
+    // admin or any future roles should go to the admin dashboard
+    return '/admin/dashboard';
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -640,7 +642,7 @@ export default function SignUp() {
                         id="terms"
                         checked={formData.agreeToTerms}
                         onCheckedChange={(checked) => handleChange('agreeToTerms', checked as boolean)}
-                        className="mt-1 data-[state=checked]:bg-[#00C853] data-[state=checked]:border-[#00C853]"
+                        className="mt-1 border-gray-400 data-[state=checked]:bg-[#00C853] data-[state=checked]:border-[#00C853]"
                         required
                       />
                       <Label htmlFor="terms" className="text-sm md:text-base text-gray-700 dark:text-gray-300 cursor-pointer leading-relaxed">

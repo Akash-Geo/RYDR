@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link } from 'react-router-dom';
 import { MapPin, Clock, Users, Star, Leaf, ShieldCheck } from 'lucide-react';
 import { Button } from './ui/button';
 import { Progress } from './ui/progress';

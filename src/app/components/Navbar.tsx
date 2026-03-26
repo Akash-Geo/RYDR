@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router";
+import { Link, useLocation } from "react-router-dom";
 import { Car, Wallet, LayoutDashboard, Moon, Sun, Menu } from "lucide-react";
 import { Button } from "./ui/button";
 import { useState } from "react";

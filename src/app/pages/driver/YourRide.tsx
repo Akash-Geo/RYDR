@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Phone, X, MapPin, Calendar, Clock, User as UserIcon, Navigation, Star } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Phone, X, MapPin, Calendar, Clock, User as UserIcon, Navigation, Star, AlertTriangle, Coins, Gauge, Car } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
@@ -31,6 +32,8 @@ interface PassengerProfile {
   id: string;
   full_name: string | null;
   gender: string | null;
+  avatar_path: string | null;
+  phone: string | null;
 }
 
 interface BookingRow {
@@ -40,6 +43,8 @@ interface BookingRow {
   seats_booked: number;
   status: BookingStatus;
   points_required: number;
+  pickup_location?: string;
+  dropoff_location?: string;
   passenger: PassengerProfile | null;
 }
 
@@ -55,7 +60,14 @@ interface RideRow {
   from_location: string;
   to_location: string;
   departure_time: string;
+  arrival_time: string | null;
+  fuel_price: number | null;
+  mileage_kmpl: number | null;
   status: RideStatus;
+  vehicle_company: string | null;
+  vehicle_model: string | null;
+  vehicle_color: string | null;
+  vehicle_registration: string | null;
   total_seats: number;
   distance_km: number | null;
   bookings: BookingRow[];
@@ -67,7 +79,35 @@ interface RideRow {
   }[];
 }
 
+const UserAvatar = ({ path, name }: { path: string | null; name: string }) => {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!path) {
+      setUrl(null);
+      return;
+    }
+    let mounted = true;
+    setUrl(null);
+    supabase.storage.from('avatars').createSignedUrl(path, 3600).then(({ data }) => {
+      if (mounted && data?.signedUrl) setUrl(data.signedUrl);
+    });
+    return () => { mounted = false; };
+  }, [path]);
+
+  if (url) {
+    return <img src={url} alt={name} className="w-16 h-16 rounded-full object-cover border border-gray-200 dark:border-gray-700" />;
+  }
+
+  return (
+    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white font-bold text-2xl flex-shrink-0">
+      {name.charAt(0).toUpperCase()}
+    </div>
+  );
+};
+
 export default function DriverYourRide() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<string>('current');
   const [rides, setRides] = useState<RideRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,7 +147,14 @@ export default function DriverYourRide() {
             from_location,
             to_location,
             departure_time,
+            arrival_time,
+            fuel_price,
+            mileage_kmpl,
             status,
+            vehicle_company,
+            vehicle_model,
+            vehicle_color,
+            vehicle_registration,
             total_seats,
             distance_km,
             bookings:bookings (
@@ -116,10 +163,14 @@ export default function DriverYourRide() {
               seats_booked,
               status,
               points_required,
+              pickup_location,
+              dropoff_location,
               passenger:passenger_id (
                 id,
                 full_name,
-                gender
+                gender,
+                avatar_path,
+                phone
               )
             ),
             feedbacks:ride_feedback (
@@ -170,7 +221,14 @@ export default function DriverYourRide() {
             from_location,
             to_location,
             departure_time,
+            arrival_time,
+            fuel_price,
+            mileage_kmpl,
             status,
+            vehicle_company,
+            vehicle_model,
+            vehicle_color,
+            vehicle_registration,
             total_seats,
             distance_km,
             bookings:bookings (
@@ -180,10 +238,14 @@ export default function DriverYourRide() {
               seats_booked,
               status,
               points_required,
+              pickup_location,
+              dropoff_location,
               passenger:passenger_id (
                 id,
                 full_name,
-                gender
+                gender,
+                avatar_path,
+                phone
               )
             ),
             feedbacks:ride_feedback (
@@ -400,35 +462,86 @@ export default function DriverYourRide() {
   );
 
   const RideCard = ({ ride }: { ride: RideRow }) => {
-    const confirmedBookings = ride.bookings.filter((b) => b.status === 'confirmed');
-    const passengerCount = confirmedBookings.length;
-    const seatsAvailable = ride.total_seats - passengerCount;
+    const confirmedBookings = ride.bookings.filter((b) => b.status === 'confirmed' || b.status === 'completed');
+    const seatsBooked = confirmedBookings.reduce((sum, b) => sum + (b.seats_booked || 1), 0);
+    const seatsAvailable = Math.max(0, ride.total_seats - seatsBooked);
     const statusInfo = getStatusInfo(ride.status);
     const earning = totalEarningsPotential(ride);
 
     return (
       <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 border border-gray-200 dark:border-gray-700 shadow-sm space-y-4">
         {/* header section */}
-        <div className="flex items-start justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-              {ride.from_location} → {ride.to_location}
-            </h2>
-            <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+        <div className="flex items-start justify-between mb-4">
+          <Badge className={`${statusInfo.color} border-0`}>{statusInfo.text}</Badge>
+        </div>
+
+        {/* Route & Ride Details */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+          <div className="space-y-3">
+            <div className="flex items-start gap-3">
+              <MapPin className="w-5 h-5 text-[#00C853] mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">From</p>
+                <p className="font-medium text-gray-900 dark:text-white">{ride.from_location}</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <MapPin className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">To</p>
+                <p className="font-medium text-gray-900 dark:text-white">{ride.to_location}</p>
+              </div>
+            </div>
+
+            {(ride.vehicle_company || ride.vehicle_model) && (
+              <div className="flex flex-col gap-2 mt-3 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50 p-3 rounded-xl w-fit">
+                <div className="flex items-center gap-2">
+                  <Car className="w-4 h-4" />
+                  <span>
+                    {ride.vehicle_color} {ride.vehicle_company} {ride.vehicle_model}
+                    {ride.vehicle_registration && (
+                      <span className="ml-2 font-mono font-medium text-gray-900 dark:text-gray-300 bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 text-xs">
+                        {ride.vehicle_registration}
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center gap-4 pt-1">
+                  <span className="flex items-center gap-1 font-medium">
+                    <Coins className="w-4 h-4 text-amber-500" />
+                    ₹{ride.fuel_price}/L
+                  </span>
+                  <span className="flex items-center gap-1 font-medium">
+                    <Gauge className="w-4 h-4 text-blue-500" />
+                    {ride.mileage_kmpl} km/L
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1.5 text-gray-600 dark:text-gray-400">
+            <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4" />
               <span className="text-sm">
-                {new Date(ride.departure_time).toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                })}{' '}
-                {new Date(ride.departure_time).toLocaleTimeString(undefined, {
-                  hour: '2-digit',
-                  minute: '2-digit',
+                <span className="inline-block w-10">Dep:</span> {new Date(ride.departure_time).toLocaleString('en-GB', {
+                  day: '2-digit', month: '2-digit', year: 'numeric',
+                  hour: '2-digit', minute: '2-digit',
                 })}
               </span>
             </div>
+            {ride.arrival_time && (
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 opacity-0" />
+                <span className="text-sm">
+                  <span className="inline-block w-10">Arr:</span> {new Date(ride.arrival_time).toLocaleString('en-GB', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit',
+                  })}
+                </span>
+              </div>
+            )}
           </div>
-          <Badge className={`${statusInfo.color} border-0`}>{statusInfo.text}</Badge>
         </div>
 
         {/* earnings/controls */}
@@ -457,6 +570,66 @@ export default function DriverYourRide() {
                 </Button>
               </>
             )}
+            {(ride.status === 'completed' || ride.status === 'cancelled') && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                onClick={async () => {
+                  try {
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (!user) return;
+
+                    const { data: existing } = await supabase
+                      .from('disputes')
+                      .select('id')
+                      .eq('ride_id', ride.id)
+                      .eq('raised_by', user.id)
+                      .maybeSingle();
+
+                    if (existing) {
+                      navigate(`/dispute/${existing.id}`);
+                      return;
+                    }
+
+                    const { data: newDispute, error: createError } = await supabase
+                      .from('disputes')
+                      .insert({
+                        ride_id: ride.id,
+                        raised_by: user.id,
+                        status: 'open',
+                        description: 'Dispute initiated',
+                      })
+                      .select()
+                      .single();
+
+                    if (createError) throw createError;
+
+                    // Construct system message
+                    try {
+                      const passengers = ride.bookings.map((b) => `${b.passenger?.full_name} (${b.passenger?.phone})`).join(', ');
+                      const systemMsg = `System: Dispute started by Driver.\nFrom: ${ride.from_location}\nTo: ${ride.to_location}\nDeparture: ${new Date(ride.departure_time).toLocaleString()}\nArrival: ${ride.arrival_time ? new Date(ride.arrival_time).toLocaleString() : 'Not set'}\nFuel Price: ₹${ride.fuel_price}/L\nMileage: ${ride.mileage_kmpl} km/L\nPassengers: ${passengers}`;
+
+                      await supabase.from('dispute_messages').insert({ 
+                        dispute_id: newDispute.id, 
+                        sender_id: user.id, 
+                        content: systemMsg 
+                      });
+                    } catch (msgErr) {
+                      console.warn('Failed to create system message, continuing to chat...', msgErr);
+                    }
+                    
+                    navigate(`/dispute/${newDispute.id}`);
+                  } catch (err) {
+                    console.error(err);
+                    alert(`Failed to start dispute: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                  }
+                }}
+              >
+                <AlertTriangle className="w-4 h-4 mr-2" />
+                Report Issue
+              </Button>
+            )}
           </div>
         </div>
 
@@ -476,9 +649,7 @@ export default function DriverYourRide() {
                 >
                   {/* passenger card */}
                   <div className="flex items-start gap-4 mb-4">
-                    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white font-bold text-2xl flex-shrink-0">
-                      {(passenger.full_name ?? 'P').charAt(0)}
-                    </div>
+                    <UserAvatar path={passenger.avatar_path} name={passenger.full_name ?? 'P'} />
                     <div className="flex-1 min-w-0">
                       <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-1">
                         {passenger.full_name ?? 'Passenger'}
@@ -490,14 +661,20 @@ export default function DriverYourRide() {
                         >
                           {passenger.gender ?? '—'}
                         </Badge>
+                        <Badge
+                          variant="secondary"
+                          className="bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-0 text-xs font-medium"
+                        >
+                          {booking.seats_booked || 1} Seat{(booking.seats_booked || 1) > 1 ? 's' : ''}
+                        </Badge>
                       </div>
                       <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
                         <Phone className="w-4 h-4" />
-                        <span className="text-sm font-medium">{passenger.id}</span>
+                        <span className="text-sm font-medium">{passenger.phone || 'No phone'}</span>
                       </div>
                     </div>
                     <Badge className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-0">
-                      Confirmed
+                      {booking.status === 'completed' ? 'Completed' : 'Confirmed'}
                     </Badge>
                   </div>
 
@@ -508,7 +685,7 @@ export default function DriverYourRide() {
                       <div className="flex-1">
                         <p className="text-xs text-gray-500 dark:text-gray-400">Pickup</p>
                         <p className="font-medium text-gray-900 dark:text-white">
-                          Pickup location as per ride route
+                          {booking.pickup_location || 'Pickup location as per ride route'}
                         </p>
                       </div>
                     </div>
@@ -518,28 +695,30 @@ export default function DriverYourRide() {
                       <div className="flex-1">
                         <p className="text-xs text-gray-500 dark:text-gray-400">Drop-off</p>
                         <p className="font-medium text-gray-900 dark:text-white">
-                          Drop-off location as per ride route
+                          {booking.dropoff_location || 'Drop-off location as per ride route'}
                         </p>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex gap-3">
-                    <Button
-                      onClick={() => handleCallPassenger('')}
-                      className="flex-1 h-12 bg-[#00C853] hover:bg-emerald-600 text-white font-semibold"
-                    >
-                      <Phone className="w-5 h-5 mr-2" />
-                      Call Passenger
-                    </Button>
-                    <Button
-                      onClick={() => handleCancelPassenger(ride.id, booking.id)}
-                      className="h-12 px-6 bg-red-600 text-white hover:bg-red-700 font-semibold"
-                    >
-                      <X className="w-5 h-5 mr-2" />
-                      Cancel
-                    </Button>
-                  </div>
+                  {ride.status !== 'completed' && ride.status !== 'cancelled' && (
+                    <div className="flex gap-3">
+                      <Button
+                        onClick={() => handleCallPassenger(passenger.phone || '')}
+                        className="flex-1 h-12 bg-[#00C853] hover:bg-emerald-600 text-white font-semibold"
+                      >
+                        <Phone className="w-5 h-5 mr-2" />
+                        Call Passenger
+                      </Button>
+                      <Button
+                        onClick={() => handleCancelPassenger(ride.id, booking.id)}
+                        className="h-12 px-6 bg-red-600 text-white hover:bg-red-700 font-semibold"
+                      >
+                        <X className="w-5 h-5 mr-2" />
+                        Cancel
+                      </Button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -579,7 +758,7 @@ export default function DriverYourRide() {
         )}
 
         {/* seats info */}
-        {passengerCount < ride.total_seats && (
+        {seatsAvailable > 0 && (
           <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 border border-dashed border-gray-300 dark:border-gray-700">
             <div className="text-center">
               <UserIcon className="w-12 h-12 text-gray-400 mx-auto mb-3" />

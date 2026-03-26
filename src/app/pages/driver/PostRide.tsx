@@ -1,11 +1,16 @@
-import { useMemo, useState } from 'react';
-import { MapPin, Calendar, Clock, Users, Coins, ArrowUpDown, Car } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { MapPin, Calendar, Clock, Users, Coins } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { supabase } from '../../../lib/supabase';
+import { MapContainer, TileLayer, Polyline, CircleMarker, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
 
 export default function DriverPostRide() {
+  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     from: '',
     to: '',
@@ -16,28 +21,40 @@ export default function DriverPostRide() {
     seats: 2,
     fuelPrice: 100,
     mileage: 15,
-    distanceKm: 10,
-    vehicleRegistration: '',
-    vehicleCompany: '',
-    vehicleModel: '',
-    vehicleColor: '',
-    womenOnly: false,
-    nonSmokerOnly: false,
+    distanceKm: 10 as number | string,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [routePath, setRoutePath] = useState<[number, number][]>([]);
+  const [mapBounds, setMapBounds] = useState<L.LatLngBoundsExpression | null>(null);
+  const [hasValidProfile, setHasValidProfile] = useState<boolean | null>(null);
+  const [driverProfile, setDriverProfile] = useState<any>(null);
+
+  useEffect(() => {
+    async function checkProfile() {
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData.user) return;
+      
+      const { data } = await supabase
+        .from('profiles')
+        .select('gender, vehicle_registration, vehicle_company, vehicle_model, vehicle_color')
+        .eq('id', authData.user.id)
+        .single();
+        
+      if (!data?.gender || !data?.vehicle_registration || !data?.vehicle_company || !data?.vehicle_model || !data?.vehicle_color) {
+        setHasValidProfile(false);
+        setError('You must complete your profile (gender and vehicle details) in the Account section before posting a ride.');
+      } else {
+        setHasValidProfile(true);
+        setDriverProfile(data);
+      }
+    }
+    void checkProfile();
+  }, []);
 
   const handleChange = (field: string, value: string | number) => {
     setFormData({ ...formData, [field]: value });
-  };
-
-  const handleSwapLocations = () => {
-    setFormData({
-      ...formData,
-      from: formData.to,
-      to: formData.from,
-    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -48,6 +65,12 @@ export default function DriverPostRide() {
   const submitRide = async () => {
     setError(null);
     setSuccess(null);
+
+    if (!hasValidProfile || !driverProfile) {
+      setError('You must complete your profile (gender and vehicle details) in the Account section before posting a ride.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -69,33 +92,53 @@ export default function DriverPostRide() {
           : null;
 
       const estimatedTotalPoints =
-        formData.mileage > 0
-          ? Math.floor((formData.fuelPrice * formData.distanceKm) / formData.mileage)
+        Number(formData.mileage) > 0
+          ? Math.floor((Number(formData.fuelPrice) * Number(formData.distanceKm)) / Number(formData.mileage))
           : null;
 
-      const { error: insertError } = await supabase.from('rides').insert({
-        driver_id: user.id,
-        from_location: formData.from,
-        to_location: formData.to,
-        departure_time: departureIso,
-        arrival_time: arrivalIso,
-        total_seats: formData.seats,
-        vacant_seats: formData.seats,
-        distance_km: formData.distanceKm,
-        fuel_price: formData.fuelPrice,
-        mileage_kmpl: formData.mileage,
-        estimated_total_points: estimatedTotalPoints,
-        vehicle_registration: formData.vehicleRegistration || null,
-        vehicle_company: formData.vehicleCompany || null,
-        vehicle_model: formData.vehicleModel || null,
-        vehicle_color: formData.vehicleColor || null,
-        women_only: formData.womenOnly,
-        non_smoker_only: formData.nonSmokerOnly,
-      });
+      const { data: rideData, error: insertError } = await supabase
+        .from('rides')
+        .insert({
+          driver_id: user.id,
+          from_location: formData.from,
+          to_location: formData.to,
+          departure_time: departureIso,
+          arrival_time: arrivalIso,
+          total_seats: formData.seats,
+          vacant_seats: formData.seats,
+          distance_km: Number(formData.distanceKm),
+          fuel_price: Number(formData.fuelPrice),
+          mileage_kmpl: Number(formData.mileage),
+          estimated_total_points: estimatedTotalPoints,
+          vehicle_registration: driverProfile.vehicle_registration,
+          vehicle_company: driverProfile.vehicle_company,
+          vehicle_model: driverProfile.vehicle_model,
+          vehicle_color: driverProfile.vehicle_color,
+          women_only: false,
+          non_smoker_only: false,
+        })
+        .select('id')
+        .single();
 
       if (insertError) throw insertError;
 
       setSuccess('Ride published successfully.');
+
+      if (rideData?.id) {
+        const { error: notifError } = await supabase.from('notifications').insert({
+          user_id: user.id,
+          type: 'ride_created', // existing enum value
+          title: 'Ride published',
+          body: 'Your new ride is now live and ready for bookings.',
+          related_ride_id: rideData.id,
+        });
+        if (notifError) {
+          // log for debugging; we don't want to block the user's flow
+          // eslint-disable-next-line no-console
+          console.error('failed to insert ride_created notification', notifError);
+        }
+      }
+      navigate('/driver/your-ride');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to publish ride.';
       setError(msg);
@@ -106,7 +149,7 @@ export default function DriverPostRide() {
 
   const estimatedTotalPoints = useMemo(() => {
     if (!formData.fuelPrice || !formData.distanceKm || !formData.mileage) return 0;
-    return Math.max(0, Math.floor((formData.fuelPrice * formData.distanceKm) / formData.mileage));
+    return Math.max(0, Math.floor((Number(formData.fuelPrice) * Number(formData.distanceKm)) / Number(formData.mileage)));
   }, [formData.fuelPrice, formData.distanceKm, formData.mileage]);
 
   const incrementSeats = () => {
@@ -119,6 +162,50 @@ export default function DriverPostRide() {
     if (formData.seats > 1) {
       handleChange('seats', formData.seats - 1);
     }
+  };
+
+  const fetchCoordinates = async (query: string) => {
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      if (data && data.length > 0) return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+    } catch (e) {
+      console.error("Geocoding error", e);
+    }
+    return null;
+  };
+
+  const calculateRoute = async () => {
+    if (!formData.from || !formData.to) return;
+    
+    const start = await fetchCoordinates(formData.from);
+    const end = await fetchCoordinates(formData.to);
+    
+    if (start && end) {
+      try {
+        const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${start.lon},${start.lat};${end.lon},${end.lat}?overview=full&geometries=geojson`);
+        const data = await res.json();
+        if (data.routes && data.routes.length > 0) {
+          const route = data.routes[0];
+          const distKm = parseFloat((route.distance / 1000).toFixed(1));
+          setFormData(prev => ({ ...prev, distanceKm: distKm }));
+          
+          const coords = route.geometry.coordinates.map((c: number[]) => [c[1], c[0]] as [number, number]);
+          setRoutePath(coords);
+          setMapBounds(L.latLngBounds([start.lat, start.lon], [end.lat, end.lon]));
+        }
+      } catch (e) {
+        console.error("Routing error", e);
+      }
+    }
+  };
+
+  const MapUpdater = ({ bounds }: { bounds: L.LatLngBoundsExpression | null }) => {
+    const map = useMap();
+    useEffect(() => {
+      if (bounds) map.fitBounds(bounds, { padding: [50, 50] });
+    }, [bounds, map]);
+    return null;
   };
 
   return (
@@ -145,15 +232,19 @@ export default function DriverPostRide() {
                 {success}
               </div>
             )}
-            {/* Route Section */}
-            <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                <MapPin className="w-5 h-5 text-[#00C853]" />
-                Route
-              </h2>
 
-              <div className="relative">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Left Column: Route & Schedule */}
+              <div className="space-y-8">
+                {/* Route Section */}
                 <div className="space-y-4">
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                    <MapPin className="w-5 h-5 text-[#00C853]" />
+                    Route Details
+                  </h2>
+
+                  <div className="relative">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* From */}
                   <div className="space-y-2">
                     <Label htmlFor="from" className="text-gray-700 dark:text-gray-300">
@@ -166,21 +257,11 @@ export default function DriverPostRide() {
                         placeholder="Enter pickup location"
                         value={formData.from}
                         onChange={(e) => handleChange('from', e.target.value)}
+                        onBlur={calculateRoute}
                         className="pl-10 h-12 text-base dark:bg-gray-900 dark:border-gray-700 dark:text-white"
                         required
                       />
                     </div>
-                  </div>
-
-                  {/* Swap Button */}
-                  <div className="flex justify-center">
-                    <button
-                      type="button"
-                      onClick={handleSwapLocations}
-                      className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 flex items-center justify-center transition-colors group"
-                    >
-                      <ArrowUpDown className="w-5 h-5 text-gray-600 dark:text-gray-300 group-hover:text-[#00C853] dark:group-hover:text-emerald-400" />
-                    </button>
                   </div>
 
                   {/* To */}
@@ -195,6 +276,7 @@ export default function DriverPostRide() {
                         placeholder="Enter destination"
                         value={formData.to}
                         onChange={(e) => handleChange('to', e.target.value)}
+                        onBlur={calculateRoute}
                         className="pl-10 h-12 text-base dark:bg-gray-900 dark:border-gray-700 dark:text-white"
                         required
                       />
@@ -203,25 +285,6 @@ export default function DriverPostRide() {
                 </div>
               </div>
 
-              {/* Map & route preview disabled */}
-              {/* Users can manually enter distance below */}
-
-              <div className="space-y-2 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-200 dark:border-gray-700 mt-4">
-                <Label htmlFor="distanceKm" className="text-sm text-gray-700 dark:text-gray-300">
-                  Estimated Distance (km)
-                </Label>
-                <Input
-                  id="distanceKm"
-                  type="number"
-                  min="0.1"
-                  step="0.1"
-                  value={formData.distanceKm || ''}
-                  onChange={(e) => handleChange('distanceKm', parseFloat(e.target.value) || 0)}
-                  placeholder="Enter distance in km"
-                  className="h-12 dark:bg-gray-900 dark:border-gray-700 dark:text-white"
-                  required
-                />
-              </div>
             </div>
 
             {/* Schedule Section */}
@@ -310,218 +373,124 @@ export default function DriverPostRide() {
                   </div>
                 </div>
               </div>
+              </div>
             </div>
 
-            {/* Capacity & Pricing Section */}
+              {/* Right Column: Map */}
+              <div className="flex flex-col space-y-4">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                  <MapPin className="w-5 h-5 text-[#00C853]" />
+                  Map Overview
+                </h2>
+                <div className="h-[320px] md:h-[400px] w-full rounded-xl overflow-hidden z-0 relative border border-gray-200 dark:border-gray-700">
+                  <MapContainer center={[20.5937, 78.9629]} zoom={5} scrollWheelZoom={false} className="h-full w-full z-0">
+                    <TileLayer
+                      attribution="© OpenStreetMap contributors"
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+                    {routePath.length > 0 && <Polyline positions={routePath} color="#00C853" weight={5} />}
+                    {routePath.length > 0 && (
+                      <CircleMarker center={routePath[0]} radius={6} color="green" fillOpacity={1} />
+                    )}
+                    {routePath.length > 0 && (
+                      <CircleMarker center={routePath[routePath.length - 1]} radius={6} color="red" fillOpacity={1} />
+                    )}
+                    <MapUpdater bounds={mapBounds} />
+                  </MapContainer>
+                </div>
+              </div>
+            </div>
+
+            {/* Capacity & Fuel Section (Full Width) */}
             <div className="space-y-4">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                 <Users className="w-5 h-5 text-[#00C853]" />
                 Capacity & Fuel
               </h2>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Number of Seats */}
-                <div className="space-y-2">
-                  <Label className="text-gray-700 dark:text-gray-300">
-                    Number of Vacant Seats
-                  </Label>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={decrementSeats}
-                      disabled={formData.seats <= 1}
-                      className="w-12 h-12 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
-                    >
-                      <span className="text-2xl text-gray-700 dark:text-gray-300">−</span>
-                    </button>
-                    
-                    <div className="flex-1 h-12 rounded-xl bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 flex items-center justify-center">
-                      <span className="text-2xl font-bold text-gray-900 dark:text-white">{formData.seats}</span>
+              <div className="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-200 dark:border-gray-700 space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {/* Number of Seats */}
+                  <div className="space-y-1">
+                    <Label className="text-xs text-gray-700 dark:text-gray-300">
+                      Vacant Seats
+                    </Label>
+                    <div className="flex items-center gap-2 h-12">
+                      <button
+                        type="button"
+                        onClick={decrementSeats}
+                        disabled={formData.seats <= 1}
+                        className="flex-1 h-full rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
+                      >
+                        <span className="text-xl text-gray-700 dark:text-gray-300">−</span>
+                      </button>
+                      
+                      <div className="flex-1 h-full rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center">
+                        <span className="text-lg font-bold text-gray-900 dark:text-white">{formData.seats}</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={incrementSeats}
+                        disabled={formData.seats >= 6}
+                        className="flex-1 h-full rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
+                      >
+                        <span className="text-xl text-gray-700 dark:text-gray-300">+</span>
+                      </button>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={incrementSeats}
-                      disabled={formData.seats >= 6}
-                      className="w-12 h-12 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
-                    >
-                      <span className="text-2xl text-gray-700 dark:text-gray-300">+</span>
-                    </button>
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">Maximum 6 seats available</p>
-                </div>
 
-                {/* Fuel & Distance */}
-                <div className="space-y-2">
-                  <Label className="text-gray-700 dark:text-gray-300">
-                    Fuel price, distance & mileage
-                  </Label>
-                  <div className="grid grid-cols-3 gap-2">
+                  {/* Fuel */}
+                  <div className="space-y-1">
+                    <Label className="text-xs text-gray-700 dark:text-gray-300">Fuel (₹/L)</Label>
                     <div className="relative">
-                      <Coins className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-amber-500" />
+                      <Coins className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-500" />
                       <Input
                         type="number"
                         min="1"
-                        step="1"
+                        step="any"
                         value={formData.fuelPrice}
-                        onChange={(e) => handleChange('fuelPrice', parseFloat(e.target.value) || 0)}
-                        className="pl-10 h-12 text-base dark:bg-gray-900 dark:border-gray-700 dark:text-white"
-                        placeholder="Fuel ₹/L"
+                        onChange={(e) => handleChange('fuelPrice', e.target.value)}
+                        className="pl-8 h-12 text-sm md:text-base bg-white dark:bg-gray-900 dark:border-gray-700 dark:text-white"
+                        placeholder="100"
                         required
                       />
                     </div>
+                  </div>
+
+                  {/* Distance */}
+                  <div className="space-y-1">
+                    <Label className="text-xs text-gray-700 dark:text-gray-300">Dist. (km)</Label>
                     <Input
                       type="number"
-                      min="1"
-                      step="1"
+                      min="0.1"
+                      step="any"
                       value={formData.distanceKm}
-                      onChange={(e) => handleChange('distanceKm', parseFloat(e.target.value) || 0)}
-                      className="h-12 text-base dark:bg-gray-900 dark:border-gray-700 dark:text-white"
-                      placeholder="Distance km"
-                      required
-                    />
-                    <Input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={formData.mileage}
-                      onChange={(e) => handleChange('mileage', parseFloat(e.target.value) || 0)}
-                      className="h-12 text-base dark:bg-gray-900 dark:border-gray-700 dark:text-white"
-                      placeholder="Mileage km/L"
+                      readOnly
+                      className="h-12 text-sm md:text-base dark:bg-gray-900 dark:border-gray-700 dark:text-white bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
+                      placeholder="Auto"
                       required
                     />
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Estimated total wallet points:{" "}
-                    <span className="font-semibold text-[#00C853]">
-                      {estimatedTotalPoints} points
-                    </span>{" "}
-                    (formula: (fuel price × distance) ÷ mileage)
-                  </p>
-                </div>
-              </div>
-            </div>
 
-            {/* Vehicle details */}
-            <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                <Car className="w-5 h-5 text-[#00C853]" />
-                Vehicle details
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="vehicleRegistration" className="text-gray-700 dark:text-gray-300">
-                    Registration number
-                  </Label>
-                  <Input
-                    id="vehicleRegistration"
-                    value={formData.vehicleRegistration}
-                    onChange={(e) => handleChange('vehicleRegistration', e.target.value)}
-                    className="h-12 dark:bg-gray-900 dark:border-gray-700 dark:text-white"
-                    placeholder="DL01AB1234"
-                  />
+                  {/* Mileage */}
+                  <div className="space-y-1">
+                    <Label className="text-xs text-gray-700 dark:text-gray-300">Mileage (km/L)</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      step="any"
+                      value={formData.mileage}
+                      onChange={(e) => handleChange('mileage', e.target.value)}
+                      className="h-12 text-sm md:text-base bg-white dark:bg-gray-900 dark:border-gray-700 dark:text-white"
+                      placeholder="15"
+                      required
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="vehicleCompany" className="text-gray-700 dark:text-gray-300">
-                    Company
-                  </Label>
-                  <Input
-                    id="vehicleCompany"
-                    value={formData.vehicleCompany}
-                    onChange={(e) => handleChange('vehicleCompany', e.target.value)}
-                    className="h-12 dark:bg-gray-900 dark:border-gray-700 dark:text-white"
-                    placeholder="e.g. Honda"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="vehicleModel" className="text-gray-700 dark:text-gray-300">
-                    Model
-                  </Label>
-                  <Input
-                    id="vehicleModel"
-                    value={formData.vehicleModel}
-                    onChange={(e) => handleChange('vehicleModel', e.target.value)}
-                    className="h-12 dark:bg-gray-900 dark:border-gray-700 dark:text-white"
-                    placeholder="e.g. City"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="vehicleColor" className="text-gray-700 dark:text-gray-300">
-                    Colour
-                  </Label>
-                  <Input
-                    id="vehicleColor"
-                    value={formData.vehicleColor}
-                    onChange={(e) => handleChange('vehicleColor', e.target.value)}
-                    className="h-12 dark:bg-gray-900 dark:border-gray-700 dark:text-white"
-                    placeholder="e.g. White"
-                  />
-                </div>
-              </div>
-            </div>
 
-            {/* Preferences */}
-            <div className="space-y-2">
-              <Label className="text-gray-700 dark:text-gray-300">Preferences</Label>
-              <div className="flex flex-wrap gap-3 text-sm">
-                <button
-                  type="button"
-                  onClick={() => handleChange('womenOnly', formData.womenOnly ? 0 : 1)}
-                  className={`px-3 py-2 rounded-full border text-xs md:text-sm ${
-                    formData.womenOnly
-                      ? 'bg-pink-100 border-pink-300 text-pink-700 dark:bg-pink-900/30 dark:border-pink-700 dark:text-pink-300'
-                      : 'border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300'
-                  }`}
-                >
-                  Women only
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleChange('nonSmokerOnly', formData.nonSmokerOnly ? 0 : 1)}
-                  className={`px-3 py-2 rounded-full border text-xs md:text-sm ${
-                    formData.nonSmokerOnly
-                      ? 'bg-emerald-100 border-emerald-300 text-emerald-700 dark:bg-emerald-900/30 dark:border-emerald-700 dark:text-emerald-300'
-                      : 'border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300'
-                  }`}
-                >
-                  Non-smokers only
-                </button>
-              </div>
-            </div>
-
-            {/* Summary Card */}
-            <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 dark:from-emerald-900/20 dark:to-green-900/20 rounded-xl border border-emerald-200 dark:border-emerald-800">
-              <h3 className="font-semibold text-gray-900 dark:text-white mb-3">Ride Summary</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600 dark:text-gray-400">Route:</span>
-                  <span className="font-medium text-gray-900 dark:text-white">
-                    {formData.from && formData.to ? `${formData.from} → ${formData.to}` : 'Not set'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600 dark:text-gray-400">Departure:</span>
-                  <span className="font-medium text-gray-900 dark:text-white">
-                    {formData.departureDate && formData.departureTime
-                      ? `${new Date(formData.departureDate).toLocaleDateString()} at ${formData.departureTime}`
-                      : 'Not set'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600 dark:text-gray-400">Available seats:</span>
-                  <span className="font-medium text-gray-900 dark:text-white">{formData.seats}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600 dark:text-gray-400">Estimated distance:</span>
-                  <span className="font-medium text-gray-900 dark:text-white">
-                    {formData.distanceKm} km
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600 dark:text-gray-400">Estimated total wallet points:</span>
-                  <span className="font-medium text-[#00C853]">
-                    {estimatedTotalPoints} points
-                  </span>
+                <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Maximum 6 seats available</p>
                 </div>
               </div>
             </div>
@@ -531,7 +500,7 @@ export default function DriverPostRide() {
           <div className="sticky bottom-0 p-6 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 rounded-b-2xl">
             <Button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || hasValidProfile === false}
               className="w-full h-14 bg-gradient-to-r from-[#00C853] to-emerald-600 hover:from-emerald-600 hover:to-[#00C853] text-white text-lg font-semibold shadow-lg disabled:opacity-60"
             >
               {isSubmitting ? 'Publishing…' : 'Publish Ride'}

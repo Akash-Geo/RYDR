@@ -1,6 +1,5 @@
 import AdminDashboard from '../AdminDashboard'
 
 export default function AdminVerificationPage() {
-  return <AdminDashboard initialTab="verification" />
+  return <AdminDashboard key="verification" initialTab="verification" />
 }
-
