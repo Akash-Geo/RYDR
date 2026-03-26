@@ -148,7 +148,7 @@ export default function SignUp() {
   };
 
   const isFormValid = () => {
-    if (!formData.fullName || !formData.email || !formData.phone || !formData.password || !formData.agreeToTerms) {
+    if (!formData.fullName || !formData.email || formData.phone.length !== 10 || !formData.password || !formData.agreeToTerms) {
       return false;
     }
     if (selectedRole === 'passenger') {
@@ -313,9 +313,13 @@ export default function SignUp() {
                         <Input
                           id="phone"
                           type="tel"
-                          placeholder="+91 98765 43210"
+                          placeholder="9876543210"
+                          maxLength={10}
                           value={formData.phone}
-                          onChange={(e) => handleChange('phone', e.target.value)}
+                          onChange={(e) => {
+                            const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                            handleChange('phone', value);
+                          }}
                           className="pl-10 h-12 text-base border-gray-300 dark:border-gray-700 dark:bg-gray-800 focus:border-[#00C853] focus:ring-[#00C853] dark:text-white"
                           required
                         />
