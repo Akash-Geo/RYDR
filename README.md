@@ -1,7 +1,7 @@
 
-  # Eco-friendly Car Pool App
+  # Car Pool App - RYDR
 
-  This is a code bundle for Eco-friendly Car Pool App. The original project is available at https://www.figma.com/design/y5yn04IYo6StvAbGI4Yj9V/Eco-friendly-Car-Pool-App.
+  This is a code bundle for the Car Pool App called RYDR.
 
   ## Running the code
 
